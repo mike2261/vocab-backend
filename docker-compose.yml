@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vocab_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vocab_app
+      POSTGRES_USER: vocab_user
+      POSTGRES_PASSWORD: vocab_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

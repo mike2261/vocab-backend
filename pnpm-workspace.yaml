@@ -1,0 +1,12 @@
+allowBuilds:
+  '@openrouter/sdk': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  argon2: true
+  esbuild: true
+  prisma: true
+onlyBuiltDependencies:
+  - argon2
+  - "@prisma/engines"
+  - prisma
+  - esbuild

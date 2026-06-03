@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/ducmai/.claude/skills/**)",
+      "Read(//home/ducmai/.claude/**)",
+      "Bash(ln -s ~/project/vocab-server/.agents/skills/business-analyst ~/.claude/skills/business-analyst)",
+      "Bash(pnpm --version)",
+      "Bash(docker --version)",
+      "Bash(docker compose *)",
+      "Bash(mkdir -p /home/ducmai/project/vocab-server/docs/plan)",
+      "Bash(mv /home/ducmai/project/vocab-server/PLAN.md /home/ducmai/project/vocab-server/docs/plan/2026-06-02-backend-plan.md)",
+      "Bash(mv /home/ducmai/project/vocab-server/SCHEMA.md /home/ducmai/project/vocab-server/docs/plan/2026-06-02-schema-design.md)",
+      "Bash(mv /home/ducmai/project/vocab-server/IDEA.md /home/ducmai/project/vocab-server/docs/plan/2026-06-02-stage-idea.md)",
+      "Bash(pnpm init *)",
+      "Bash(pnpm rebuild *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(node_modules/.bin/prisma generate *)",
+      "Bash(pnpm add *)",
+      "Bash(node_modules/.bin/tsc *)",
+      "Bash(node_modules/.bin/tsx src/server.ts)",
+      "Bash(curl -s http://localhost:4000/health)",
+      "Bash(kill %1)",
+      "Bash(node_modules/.bin/prisma migrate *)",
+      "Bash(node_modules/.bin/tsx *)",
+      "WebSearch",
+      "WebFetch(domain:openrouter.ai)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pnpm approve-builds *)",
+      "WebFetch(domain:mobbin.com)",
+      "WebFetch(domain:colorpickercode.com)",
+      "WebFetch(domain:brandpalettes.com)"
+    ]
+  }
+}

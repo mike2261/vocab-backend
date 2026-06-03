@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "business-analyst": {
+      "source": "aj-geddes/claude-code-bmad-skills",
+      "sourceType": "github",
+      "skillPath": "bmad-skills/business-analyst/SKILL.md",
+      "computedHash": "d9520001b077121b9817bb9e0b273ea6d4a5a1b0c4a557b3b2f875cf2ac0b08f"
+    }
+  }
+}
