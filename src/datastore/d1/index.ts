@@ -80,8 +80,17 @@ export interface UserSettingsTable {
   updated_at: string;
 }
 
+export interface EmailOtpsTable {
+  id: string;
+  email: string;
+  code: string;
+  expires_at: string;
+  created_at: string;
+}
+
 export interface DB {
   users: UsersTable;
+  email_otps: EmailOtpsTable;
   vocabularies: VocabulariesTable;
   vocabulary_tags: VocabularyTagsTable;
   meanings: MeaningsTable;

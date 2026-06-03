@@ -1,168 +1,105 @@
 import { type } from "arktype";
 import { Hono } from "hono";
-import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { verifyWithJwks } from "hono/jwt";
 import type { AppContext } from "../fetch";
-import { middlewareJWT, signAccessToken } from "../hxxp/auth";
+import { issueToken, middlewareJWT } from "../hxxp/auth";
 import { AppError } from "../hxxp/error";
 import { validate } from "../hxxp/validator";
 import * as authService from "../services/auth";
-import { signRefreshToken, verifyRefreshToken } from "../utils/crypto";
 
-const REFRESH_EXPIRES = 7 * 24 * 60 * 60;
+const schemaEmailRequest = type({ email: "string.email" });
+const schemaEmailVerify = type({ email: "string.email", code: /^[0-9]{6}$/ });
+const schemaGoogle = type({ id_token: "string > 0" });
 
-const schemaRegister = type({ email: "string.email", password: "string >= 8", "displayName?": "string | null" });
-const schemaLogin = type({ email: "string.email", password: "string" });
+const schemaIDTokenGoogle = type({
+  aud: "string",
+  sub: "string",
+  email: "string",
+  email_verified: "boolean",
+  name: "string",
+  picture: "string | undefined",
+});
 
 const auth = new Hono<AppContext>();
 
-auth.post("/register", validate("json", schemaRegister), async (c) => {
-  const body = c.req.valid("json");
+auth.post("/email/request", validate("json", schemaEmailRequest), async (c) => {
+  const { email } = c.req.valid("json");
   const db = c.get("db");
-  const user = await authService.registerUser(db, {
-    email: body.email,
-    password: body.password,
-    displayName: body.displayName,
-  });
 
-  const [accessToken, refreshToken] = await Promise.all([
-    signAccessToken(user.id, c.env.JWT_SECRET),
-    signRefreshToken(user.id, c.env.JWT_REFRESH_SECRET, REFRESH_EXPIRES),
-  ]);
+  const code = await authService.createOTP(db, email.toLowerCase());
 
-  setCookie(c, "refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "Lax",
-    path: "/",
-    maxAge: REFRESH_EXPIRES,
-  });
-  return c.json({ data: user, accessToken }, 201);
-});
-
-auth.post("/login", validate("json", schemaLogin), async (c) => {
-  const body = c.req.valid("json");
-  const db = c.get("db");
-  const user = await authService.loginUser(db, body);
-  if (!user) throw new AppError("Authn", "Invalid email or password");
-
-  const [accessToken, refreshToken] = await Promise.all([
-    signAccessToken(user.id, c.env.JWT_SECRET),
-    signRefreshToken(user.id, c.env.JWT_REFRESH_SECRET, REFRESH_EXPIRES),
-  ]);
-
-  setCookie(c, "refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "Lax",
-    path: "/",
-    maxAge: REFRESH_EXPIRES,
-  });
-  return c.json({ data: { accessToken, user } });
-});
-
-auth.post("/logout", (c) => {
-  deleteCookie(c, "refreshToken", { path: "/" });
-  return c.json({ data: { ok: true } });
-});
-
-auth.post("/refresh", async (c) => {
-  const token = getCookie(c, "refreshToken");
-  if (!token) throw new AppError("Authn", "Refresh token missing");
-
-  let payload: { sub: string };
-  try {
-    payload = await verifyRefreshToken(token, c.env.JWT_REFRESH_SECRET);
-  } catch {
-    throw new AppError("Authn", "Invalid or expired refresh token");
+  if (c.env.RESEND_API_KEY) {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${c.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `Lexio <noreply@${new URL(c.env.APP_URL).hostname}>`,
+        to: [email],
+        subject: "Your Lexio login code",
+        html: `<p>Your login code is: <strong style="font-size:24px;letter-spacing:4px">${code}</strong></p><p>Expires in 10 minutes. Do not share this code.</p>`,
+      }),
+    });
+  } else {
+    console.info(`[auth] OTP for ${email}: ${code}`);
   }
 
-  const accessToken = await signAccessToken(payload.sub, c.env.JWT_SECRET);
-  return c.json({ data: { accessToken } });
+  return c.json({ data: { email: email.toLowerCase() } });
+});
+
+auth.post("/email/verify", validate("json", schemaEmailVerify), async (c) => {
+  const { email, code } = c.req.valid("json");
+  const db = c.get("db");
+
+  await authService.verifyOTP(db, email.toLowerCase(), code);
+  const user = await authService.upsertUserByEmail(db, email.toLowerCase());
+  const token = await issueToken(user.id, c.env.JWT_SECRET);
+
+  return c.json({ data: { token, user: { id: user.id, email: user.email, display_name: user.display_name } } });
+});
+
+auth.post("/google", validate("json", schemaGoogle), async (c) => {
+  if (!c.env.GSI_CLIENT_ID) throw new AppError("NotExist", "Google Sign-In is not configured");
+
+  const { id_token } = c.req.valid("json");
+
+  let rawPayload: unknown;
+  try {
+    rawPayload = await verifyWithJwks(
+      id_token,
+      {
+        jwks_uri: "https://www.googleapis.com/oauth2/v3/certs",
+        verification: { iss: "https://accounts.google.com", aud: c.env.GSI_CLIENT_ID, iat: true, exp: true },
+        allowedAlgorithms: ["RS256"],
+      },
+      { cf: { cacheTtlByStatus: { "200-299": 86400 } } },
+    );
+  } catch {
+    throw new AppError("Authn", "Invalid Google token");
+  }
+
+  const idToken = schemaIDTokenGoogle(rawPayload);
+  if (idToken instanceof type.errors) throw new AppError("Authn", "Invalid Google token payload");
+  if (!idToken.email_verified) throw new AppError("Authn", "Google email not verified");
+  if (idToken.aud !== c.env.GSI_CLIENT_ID) throw new AppError("Authn", "Token audience mismatch");
+
+  const db = c.get("db");
+  const user = await authService.upsertUserByGoogle(db, {
+    googleId: `${idToken.aud}:${idToken.sub}`,
+    email: idToken.email,
+    name: idToken.name,
+    avatarUrl: idToken.picture ?? null,
+  });
+
+  const token = await issueToken(user.id, c.env.JWT_SECRET);
+  return c.json({ data: { token, user: { id: user.id, email: user.email, display_name: user.display_name } } });
 });
 
 auth.get("/me", middlewareJWT, async (c) => {
-  const jwtPayload = c.get("jwtPayload");
-  const userId = String(jwtPayload.sub);
+  const userId = String(c.get("jwtPayload").sub);
   const db = c.get("db");
   const user = await authService.getUserById(db, userId);
   if (!user) throw new AppError("Authn", "User not found");
   return c.json({ data: user });
-});
-
-auth.get("/google", (c) => {
-  if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CALLBACK_URL) {
-    throw new AppError("NotExist", "Google OAuth is not configured");
-  }
-
-  const params = new URLSearchParams({
-    client_id: c.env.GOOGLE_CLIENT_ID,
-    redirect_uri: c.env.GOOGLE_CALLBACK_URL,
-    response_type: "code",
-    scope: "openid email profile",
-    access_type: "offline",
-    prompt: "consent",
-  });
-
-  return c.json({ data: { url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` } });
-});
-
-auth.get("/google/callback", async (c) => {
-  if (
-    !c.env.GOOGLE_CLIENT_ID ||
-    !c.env.GOOGLE_CLIENT_SECRET ||
-    !c.env.GOOGLE_CALLBACK_URL ||
-    !c.env.GOOGLE_REDIRECT_FE_URL
-  ) {
-    throw new AppError("NotExist", "Google OAuth is not configured");
-  }
-
-  const code = c.req.query("code");
-  if (!code) throw new AppError("Invalid", "Authorization code missing");
-
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: c.env.GOOGLE_CLIENT_ID,
-      client_secret: c.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: c.env.GOOGLE_CALLBACK_URL,
-      grant_type: "authorization_code",
-    }),
-  });
-
-  if (!tokenRes.ok) throw new AppError("Authn", "Failed to exchange authorization code");
-
-  const tokens = (await tokenRes.json()) as { access_token: string };
-
-  const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
-  });
-  if (!userInfoRes.ok) throw new AppError("Authn", "Failed to fetch Google user info");
-
-  const googleUser = (await userInfoRes.json()) as { id: string; email: string; name?: string; picture?: string };
-  const db = c.get("db");
-
-  const user = await authService.findOrCreateGoogleUser(db, {
-    googleId: googleUser.id,
-    email: googleUser.email,
-    displayName: googleUser.name ?? null,
-    avatarUrl: googleUser.picture ?? null,
-  });
-
-  const [accessToken, refreshToken] = await Promise.all([
-    signAccessToken(user.id, c.env.JWT_SECRET),
-    signRefreshToken(user.id, c.env.JWT_REFRESH_SECRET, REFRESH_EXPIRES),
-  ]);
-
-  setCookie(c, "refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "Lax",
-    path: "/",
-    maxAge: REFRESH_EXPIRES,
-  });
-  return c.redirect(`${c.env.GOOGLE_REDIRECT_FE_URL}?token=${accessToken}`);
 });
 
 export default auth;
