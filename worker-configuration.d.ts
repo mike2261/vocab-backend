@@ -6,6 +6,8 @@ interface Env {
   JWT_SECRET: string;
   RESEND_API_KEY: string;
   OPENROUTER_API_KEY: string;
+  GSI_CLIENT_SECRET: string;
+  
   // Optional — Google Sign-In (id_token flow)
   GSI_CLIENT_ID: string;
   // Vars
