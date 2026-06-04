@@ -86,5 +86,14 @@ export async function getReviewHistory(
   ]);
 
   const total = Number(countRow?.count ?? 0);
-  return { items, total, page, pageSize };
+  return {
+    items: items.map((r) => ({
+      id: r.id,
+      rating: r.rating,
+      reviewedAt: r.reviewed_at,
+    })),
+    total,
+    page,
+    pageSize,
+  };
 }

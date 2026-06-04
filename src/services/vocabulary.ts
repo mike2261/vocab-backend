@@ -7,8 +7,7 @@ async function getVocabWithDetails(db: Kysely<DB>, vocabId: string) {
   const vocab = await db.selectFrom("vocabularies").where("id", "=", vocabId).selectAll().executeTakeFirst();
   if (!vocab) return null;
 
-  const [tags, meanings, reviewState] = await Promise.all([
-    db.selectFrom("vocabulary_tags").where("vocabulary_id", "=", vocabId).selectAll().execute(),
+  const [meanings, reviewState] = await Promise.all([
     db.selectFrom("meanings").where("vocabulary_id", "=", vocabId).orderBy("order_index", "asc").selectAll().execute(),
     db.selectFrom("review_states").where("vocabulary_id", "=", vocabId).selectAll().executeTakeFirst(),
   ]);
@@ -25,13 +24,30 @@ async function getVocabWithDetails(db: Kysely<DB>, vocabId: string) {
       : [];
 
   return {
-    ...vocab,
-    tags,
+    id: vocab.id,
+    word: vocab.word,
+    pronunciationUk: vocab.pronunciation_uk,
+    pronunciationUs: vocab.pronunciation_us,
+    createdAt: vocab.created_at,
+    updatedAt: vocab.updated_at,
     meanings: meanings.map((m) => ({
-      ...m,
-      examples: examples.filter((e) => e.meaning_id === m.id),
+      id: m.id,
+      partOfSpeech: m.part_of_speech,
+      definition: m.definition,
+      translation: m.translation,
+      cefrLevel: m.cefr_level,
+      orderIndex: m.order_index,
+      examples: examples
+        .filter((e) => e.meaning_id === m.id)
+        .map((e) => ({ id: e.id, sentence: e.sentence, translation: e.translation })),
     })),
-    review_state: reviewState ?? null,
+    reviewState: reviewState
+      ? {
+          stage: reviewState.stage,
+          lastReviewedAt: reviewState.last_reviewed_at,
+          nextReviewAt: reviewState.next_review_at,
+        }
+      : null,
   };
 }
 
@@ -163,8 +179,13 @@ export async function listVocabularies(
   const vocabIds = items.map((v) => v.id);
   if (vocabIds.length === 0) return { items: [], total, page, pageSize };
 
-  const [allTags, allReviewStates] = await Promise.all([
-    db.selectFrom("vocabulary_tags").where("vocabulary_id", "in", vocabIds).selectAll().execute(),
+  const [allMeanings, allReviewStates] = await Promise.all([
+    db
+      .selectFrom("meanings")
+      .where("vocabulary_id", "in", vocabIds)
+      .orderBy("order_index", "asc")
+      .selectAll()
+      .execute(),
     db
       .selectFrom("review_states")
       .where("vocabulary_id", "in", vocabIds)
@@ -172,11 +193,26 @@ export async function listVocabularies(
       .execute(),
   ]);
 
-  const enriched = items.map((v) => ({
-    ...v,
-    tags: allTags.filter((t) => t.vocabulary_id === v.id),
-    review_state: allReviewStates.find((r) => r.vocabulary_id === v.id) ?? null,
-  }));
+  const enriched = items.map((v) => {
+    const rs = allReviewStates.find((r) => r.vocabulary_id === v.id);
+    return {
+      id: v.id,
+      word: v.word,
+      createdAt: v.created_at,
+      reviewState: rs
+        ? { stage: rs.stage, nextReviewAt: rs.next_review_at }
+        : null,
+      meanings: allMeanings
+        .filter((m) => m.vocabulary_id === v.id)
+        .map((m) => ({
+          id: m.id,
+          partOfSpeech: m.part_of_speech,
+          definition: m.definition,
+          translation: m.translation,
+          cefrLevel: m.cefr_level,
+        })),
+    };
+  });
 
   return { items: enriched, total, page, pageSize };
 }
@@ -185,23 +221,18 @@ export async function getDueVocabularies(db: Kysely<DB>, userId: string, limit: 
   const now = new Date().toISOString();
   const dueStates = await db
     .selectFrom("review_states")
-    .where("next_review_at", "<=", now)
-    .orderBy("next_review_at", "asc")
+    .innerJoin("vocabularies", "vocabularies.id", "review_states.vocabulary_id")
+    .where("vocabularies.user_id", "=", userId)
+    .where("review_states.next_review_at", "<=", now)
+    .orderBy("review_states.next_review_at", "asc")
     .limit(limit)
-    .select("vocabulary_id")
+    .select("review_states.vocabulary_id")
     .execute();
 
   if (dueStates.length === 0) return [];
 
   const vocabIds = dueStates.map((r) => r.vocabulary_id);
-  const vocabs = await db
-    .selectFrom("vocabularies")
-    .where("user_id", "=", userId)
-    .where("id", "in", vocabIds)
-    .selectAll()
-    .execute();
-
-  const results = await Promise.all(vocabs.map((v) => getVocabWithDetails(db, v.id)));
+  const results = await Promise.all(vocabIds.map((id) => getVocabWithDetails(db, id)));
   return results.filter((v): v is NonNullable<typeof v> => v !== null);
 }
 

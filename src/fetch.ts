@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 import type { DB } from "./datastore/d1/index";
 import { initDB_D1 } from "./datastore/index";
 import auth from "./handlers/auth";
+import passages from "./handlers/passages";
 import reviews from "./handlers/reviews";
 import settings from "./handlers/settings";
 import vocabularies from "./handlers/vocabularies";
@@ -52,6 +53,7 @@ const api = new Hono<AppContext>();
 api.route("/auth", auth);
 api.route("/vocabularies", vocabularies);
 api.route("/reviews", reviews);
+api.route("/passages", passages);
 api.route("/settings", settings);
 
 app.route("/api", api);
