@@ -29,8 +29,16 @@ const appOnError: ErrorHandler<AppContext> = (err, c) => {
 app.onError(appOnError);
 
 app.use("*", (c, next) => {
-  const allowedOrigins = c.env.CORS_ORIGIN.split(",").map((s) => s.trim());
-  return cors({ origin: [...allowedOrigins, "https://vocab-web.anhduc22601.workers.dev"], credentials: true, maxAge: 3600 })(c, next);
+  const allowedOrigins = [
+    ...c.env.CORS_ORIGIN.split(",").map((s) => s.trim()),
+    "https://vocab-web.anhduc22601.workers.dev",
+    "http://localhost:3000",
+  ];
+  return cors({
+    origin: (origin) => (allowedOrigins.includes(origin) ? origin : null),
+    credentials: true,
+    maxAge: 3600,
+  })(c, next);
 });
 
 app.use("*", async (c, next) => {
