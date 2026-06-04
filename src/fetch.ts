@@ -36,8 +36,7 @@ app.use("*", (c, next) => {
     "http://localhost:3000",
   ];
   return cors({
-    origin: ["https://vocab-web.anhduc22601.workers.dev",
-    "http://localhost:3000"],
+    origin: allowedOrigins,
     credentials: true,
     maxAge: 3600,
   })(c, next);
@@ -48,7 +47,13 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-app.get("/health", (c) => c.json({ status: "ok", timestamp: new Date().toISOString() }));
+app.get("/health", (c) =>
+  c.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    timezone: c.env.APP_TIMEZONE,
+  }),
+);
 
 const api = new Hono<AppContext>();
 api.route("/auth", auth);

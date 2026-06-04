@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 import type { DB } from "../datastore/d1/index";
 import { generateWordData } from "../llm/word";
+import { normalizeUtcTimestamp } from "../utils/datetime";
 import { newUUID } from "../utils/uuid";
 
 async function getVocabWithDetails(db: Kysely<DB>, vocabId: string) {
@@ -28,8 +29,8 @@ async function getVocabWithDetails(db: Kysely<DB>, vocabId: string) {
     word: vocab.word,
     pronunciationUk: vocab.pronunciation_uk,
     pronunciationUs: vocab.pronunciation_us,
-    createdAt: vocab.created_at,
-    updatedAt: vocab.updated_at,
+    createdAt: normalizeUtcTimestamp(vocab.created_at),
+    updatedAt: normalizeUtcTimestamp(vocab.updated_at),
     meanings: meanings.map((m) => ({
       id: m.id,
       partOfSpeech: m.part_of_speech,
@@ -44,8 +45,8 @@ async function getVocabWithDetails(db: Kysely<DB>, vocabId: string) {
     reviewState: reviewState
       ? {
           stage: reviewState.stage,
-          lastReviewedAt: reviewState.last_reviewed_at,
-          nextReviewAt: reviewState.next_review_at,
+          lastReviewedAt: normalizeUtcTimestamp(reviewState.last_reviewed_at),
+          nextReviewAt: normalizeUtcTimestamp(reviewState.next_review_at),
         }
       : null,
   };
@@ -198,10 +199,8 @@ export async function listVocabularies(
     return {
       id: v.id,
       word: v.word,
-      createdAt: v.created_at,
-      reviewState: rs
-        ? { stage: rs.stage, nextReviewAt: rs.next_review_at }
-        : null,
+      createdAt: normalizeUtcTimestamp(v.created_at),
+      reviewState: rs ? { stage: rs.stage, nextReviewAt: normalizeUtcTimestamp(rs.next_review_at) } : null,
       meanings: allMeanings
         .filter((m) => m.vocabulary_id === v.id)
         .map((m) => ({

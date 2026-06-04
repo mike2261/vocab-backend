@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 import type { DB } from "../datastore/d1/index";
+import { normalizeUtcTimestamp } from "../utils/datetime";
 import { newUUID } from "../utils/uuid";
 import { calculateNextReview, type ReviewRating } from "./repetition";
 
@@ -59,7 +60,21 @@ export async function reviewVocabulary(db: Kysely<DB>, userId: string, vocabular
     })
     .execute();
 
-  return db.selectFrom("review_states").where("vocabulary_id", "=", vocabularyId).selectAll().executeTakeFirst();
+  const updatedState = await db
+    .selectFrom("review_states")
+    .where("vocabulary_id", "=", vocabularyId)
+    .selectAll()
+    .executeTakeFirst();
+
+  if (!updatedState) return null;
+
+  return {
+    ...updatedState,
+    last_reviewed_at: normalizeUtcTimestamp(updatedState.last_reviewed_at),
+    next_review_at: normalizeUtcTimestamp(updatedState.next_review_at) ?? updatedState.next_review_at,
+    created_at: normalizeUtcTimestamp(updatedState.created_at) ?? updatedState.created_at,
+    updated_at: normalizeUtcTimestamp(updatedState.updated_at) ?? updatedState.updated_at,
+  };
 }
 
 export async function getReviewHistory(
@@ -90,7 +105,7 @@ export async function getReviewHistory(
     items: items.map((r) => ({
       id: r.id,
       rating: r.rating,
-      reviewedAt: r.reviewed_at,
+      reviewedAt: normalizeUtcTimestamp(r.reviewed_at) ?? r.reviewed_at,
     })),
     total,
     page,

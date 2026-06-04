@@ -13,4 +13,5 @@ interface Env {
   // Vars
   CORS_ORIGIN: string;
   APP_URL: string;
+  APP_TIMEZONE: string;
 }
