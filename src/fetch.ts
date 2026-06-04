@@ -36,7 +36,8 @@ app.use("*", (c, next) => {
     "http://localhost:3000",
   ];
   return cors({
-    origin: (origin) => (allowedOrigins.includes(origin) ? origin : null),
+    origin: ["https://vocab-web.anhduc22601.workers.dev",
+    "http://localhost:3000"],
     credentials: true,
     maxAge: 3600,
   })(c, next);
