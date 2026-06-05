@@ -76,6 +76,49 @@ const MOCK_RESPONSE: LlmWordData = {
   ],
 };
 
+function parseJsonContent(rawContent: string): unknown {
+  const trimmed = rawContent.trim();
+  if (!trimmed) {
+    throw new Error("LLM returned empty content");
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const fencedJson = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1];
+    if (fencedJson) {
+      return JSON.parse(fencedJson);
+    }
+
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      return JSON.parse(trimmed.slice(start, end + 1));
+    }
+
+    throw new Error("LLM returned non-JSON content");
+  }
+}
+
+function extractWordDataCandidate(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["wordData", "word_data", "vocabulary", "entry", "data", "result"]) {
+    const nested = record[key];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const nestedRecord = nested as Record<string, unknown>;
+      if ("meanings" in nestedRecord || "pronunciationUk" in nestedRecord || "pronunciationUs" in nestedRecord) {
+        return nested;
+      }
+    }
+  }
+
+  return value;
+}
+
 export async function generateWordData(word: string, apiKey: string): Promise<LlmWordData> {
   if (!apiKey) {
     console.warn("[llm] OPENROUTER_API_KEY not set, returning mock response");
@@ -90,6 +133,11 @@ export async function generateWordData(word: string, apiKey: string): Promise<Ll
       apiKey,
       "openrouter/auto",
       [
+        {
+          role: "system",
+          content:
+            "Return only JSON that matches the provided schema. Do not wrap the object in another property, markdown, or explanatory text.",
+        },
         {
           role: "user",
           content: `Generate a dictionary entry for the English word: "${word}". Include 1–3 most common meanings with 1–2 example sentences each. Provide Vietnamese translations.`,
@@ -112,9 +160,10 @@ export async function generateWordData(word: string, apiKey: string): Promise<Ll
 
   console.info(`[llm] raw response: ${rawContent}`);
 
-  const parsed = WordDataSchema(JSON.parse(rawContent));
+  const json = extractWordDataCandidate(parseJsonContent(rawContent));
+  const parsed = WordDataSchema(json);
   if (parsed instanceof type.errors) {
-    console.error("[llm] response validation failed:", parsed.summary);
+    console.warn("[llm] response validation failed:", parsed.summary);
     throw new Error("LLM returned invalid JSON");
   }
 
