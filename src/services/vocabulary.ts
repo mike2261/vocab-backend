@@ -1,8 +1,65 @@
-import type { Kysely } from "kysely";
+import { type Kysely, type SqlBool, sql } from "kysely";
 import type { DB } from "../datastore/d1/index";
 import { generateWordData } from "../llm/word";
 import { normalizeUtcTimestamp } from "../utils/datetime";
 import { newUUID } from "../utils/uuid";
+
+function addDaysIso(value: string, days: number) {
+  const date = new Date(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
+}
+
+function needsInitialScheduleRepair(reviewState: {
+  stage: number;
+  repetition_count: number;
+  interval_days: number;
+  last_reviewed_at: string | null;
+  next_review_at: string;
+  created_at: string;
+}) {
+  return (
+    reviewState.stage === 1 &&
+    reviewState.repetition_count === 0 &&
+    reviewState.interval_days === 0 &&
+    reviewState.last_reviewed_at === null &&
+    reviewState.next_review_at <= reviewState.created_at
+  );
+}
+
+async function repairInitialSchedulesForUser(db: Kysely<DB>, userId: string) {
+  const candidates = await db
+    .selectFrom("review_states")
+    .innerJoin("vocabularies", "vocabularies.id", "review_states.vocabulary_id")
+    .where("vocabularies.user_id", "=", userId)
+    .where("review_states.stage", "=", 1)
+    .where("review_states.repetition_count", "=", 0)
+    .where("review_states.interval_days", "=", 0)
+    .where("review_states.last_reviewed_at", "is", null)
+    .select([
+      "review_states.vocabulary_id",
+      "review_states.stage",
+      "review_states.repetition_count",
+      "review_states.interval_days",
+      "review_states.last_reviewed_at",
+      "review_states.next_review_at",
+      "review_states.created_at",
+    ])
+    .execute();
+
+  await Promise.all(
+    candidates.filter(needsInitialScheduleRepair).map((state) =>
+      db
+        .updateTable("review_states")
+        .set({
+          next_review_at: addDaysIso(state.created_at, 1),
+          updated_at: new Date().toISOString(),
+        })
+        .where("vocabulary_id", "=", state.vocabulary_id)
+        .execute(),
+    ),
+  );
+}
 
 async function getVocabWithDetails(db: Kysely<DB>, vocabId: string) {
   const vocab = await db.selectFrom("vocabularies").where("id", "=", vocabId).selectAll().executeTakeFirst();
@@ -123,7 +180,7 @@ export async function createVocabulary(db: Kysely<DB>, userId: string, word: str
       interval_days: 0,
       repetition_count: 0,
       ease_factor: 2.5,
-      next_review_at: now,
+      next_review_at: addDaysIso(now, 1),
       created_at: now,
       updated_at: now,
     })
@@ -138,6 +195,8 @@ export async function listVocabularies(
   userId: string,
   query: { page?: number; pageSize?: number; search?: string; tag?: string; stage?: number },
 ) {
+  await repairInitialSchedulesForUser(db, userId);
+
   const page = Math.max(1, query.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 20));
   const skip = (page - 1) * pageSize;
@@ -217,12 +276,14 @@ export async function listVocabularies(
 }
 
 export async function getDueVocabularies(db: Kysely<DB>, userId: string, limit: number) {
+  await repairInitialSchedulesForUser(db, userId);
+
   const now = new Date().toISOString();
   const dueStates = await db
     .selectFrom("review_states")
     .innerJoin("vocabularies", "vocabularies.id", "review_states.vocabulary_id")
     .where("vocabularies.user_id", "=", userId)
-    .where("review_states.next_review_at", "<=", now)
+    .where(sql<SqlBool>`datetime(review_states.next_review_at) <= datetime(${now})`)
     .orderBy("review_states.next_review_at", "asc")
     .limit(limit)
     .select("review_states.vocabulary_id")
@@ -236,6 +297,8 @@ export async function getDueVocabularies(db: Kysely<DB>, userId: string, limit: 
 }
 
 export async function getVocabularyById(db: Kysely<DB>, userId: string, id: string) {
+  await repairInitialSchedulesForUser(db, userId);
+
   const vocab = await db
     .selectFrom("vocabularies")
     .where("id", "=", id)
